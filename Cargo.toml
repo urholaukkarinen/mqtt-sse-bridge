@@ -1,0 +1,17 @@
+[package]
+name = "mqtt-sse-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+pretty_env_logger = "0.4"
+rumqttc = "0.16.0"
+warp = "0.3.2"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1.1", features = ["net", "sync"] }
+futures-util = { version = "0.3.24", default-features = false, features = ["sink"] }
+toml = "0.5.9"
+serde = { version = "1.0", features = ["derive"]}
+anyhow = "1.0"
+
