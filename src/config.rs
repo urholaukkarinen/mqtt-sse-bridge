@@ -17,8 +17,6 @@ pub struct SseConfig {
     pub port: u16,
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
-    #[serde(default = "default_buffer_size")]
-    pub buffer_size: usize,
 }
 
 impl Default for SseConfig {
@@ -27,7 +25,6 @@ impl Default for SseConfig {
             ip: default_ip(),
             port: default_port(),
             endpoint: default_endpoint(),
-            buffer_size: default_buffer_size(),
         }
     }
 }
@@ -42,10 +39,6 @@ fn default_port() -> u16 {
 
 fn default_endpoint() -> String {
     "events".to_string()
-}
-
-fn default_buffer_size() -> usize {
-    1024
 }
 
 #[derive(Serialize, Deserialize)]
