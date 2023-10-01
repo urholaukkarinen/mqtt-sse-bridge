@@ -41,7 +41,7 @@ fn default_endpoint() -> String {
     "events".to_string()
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MqttConfig {
     pub host: String,
     pub port: u16,

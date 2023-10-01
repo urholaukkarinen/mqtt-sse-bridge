@@ -1,3 +1,5 @@
+#![deny(clippy::all)]
+
 use std::convert::Infallible;
 use std::error::Error;
 use std::net::IpAddr;
@@ -10,7 +12,7 @@ use rumqttc::Event::Incoming;
 use rumqttc::Packet::Publish;
 use rumqttc::{AsyncClient, EventLoop, MqttOptions};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio_stream::wrappers::{UnboundedReceiverStream};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use warp::{sse::Event, Filter, Reply};
 
@@ -34,7 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let routes = warp::path(config.sse.endpoint.clone())
         .and(warp::get())
-        .map(move || sse_reply(streams.clone()))
+        .map(move || sse_reply(&streams))
         .with(warp::cors().allow_any_origin());
 
     let ip = IpAddr::from_str(&config.sse.ip)
@@ -61,7 +63,7 @@ async fn read_config(path: impl AsRef<Path>) -> Result<Config, Box<dyn Error>> {
     Ok(config)
 }
 
-fn sse_reply(streams: Arc<Mutex<Vec<UnboundedSender<String>>>>) -> impl Reply {
+fn sse_reply(streams: &Arc<Mutex<Vec<UnboundedSender<String>>>>) -> impl Reply {
     let (tx, rx) = unbounded_channel();
     streams.lock().unwrap().push(tx);
     let stream = UnboundedReceiverStream::new(rx).map(make_event);
@@ -74,22 +76,26 @@ fn make_event(data: String) -> Result<Event, Infallible> {
 
 fn start_mqtt_subscription(config: MqttConfig, streams: Arc<Mutex<Vec<UnboundedSender<String>>>>) {
     tokio::spawn(async move {
-        let (_mqtt_client, mut mqtt_event_loop) = setup_mqtt(config).await;
-
         loop {
-            match mqtt_event_loop.poll().await {
-                Ok(Incoming(Publish(rumqttc::Publish { payload, .. }))) => {
-                    let data = String::from_utf8_lossy(&payload).to_string();
-                    log::trace!("{}", data);
+            let (_mqtt_client, mut mqtt_event_loop) = setup_mqtt(config.clone()).await;
 
-                    streams
-                        .lock()
-                        .unwrap()
-                        .retain(|tx| tx.send(data.clone()).is_ok());
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("{:?}", err);
+            loop {
+                match mqtt_event_loop.poll().await {
+                    Ok(Incoming(Publish(rumqttc::Publish { payload, .. }))) => {
+                        let data = String::from_utf8_lossy(&payload).to_string();
+                        log::trace!("{}", data);
+
+                        streams
+                            .lock()
+                            .unwrap()
+                            .retain(|tx| tx.send(data.clone()).is_ok());
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::error!("{:?}", err);
+
+                        break;
+                    }
                 }
             }
         }
