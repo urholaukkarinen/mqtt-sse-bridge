@@ -3,13 +3,14 @@ use std::error::Error;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 use rumqttc::Event::Incoming;
 use rumqttc::Packet::Publish;
 use rumqttc::{AsyncClient, EventLoop, MqttOptions};
-use tokio::sync::broadcast::{channel, Receiver, Sender};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio_stream::wrappers::{UnboundedReceiverStream};
 use tokio_stream::StreamExt;
 use warp::{sse::Event, Filter, Reply};
 
@@ -25,15 +26,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let config = read_config(CONFIG_FILENAME).await?;
 
-    let (tx, _rx) = channel::<String>(config.sse.buffer_size);
+    let streams = Arc::new(Mutex::new(Vec::new()));
 
     println!("{}", config.mqtt);
 
-    start_mqtt_subscription(config.mqtt, tx.clone());
+    start_mqtt_subscription(config.mqtt, streams.clone());
 
     let routes = warp::path(config.sse.endpoint.clone())
         .and(warp::get())
-        .map(move || sse_reply(tx.subscribe()))
+        .map(move || sse_reply(streams.clone()))
         .with(warp::cors().allow_any_origin());
 
     let ip = IpAddr::from_str(&config.sse.ip)
@@ -60,8 +61,10 @@ async fn read_config(path: impl AsRef<Path>) -> Result<Config, Box<dyn Error>> {
     Ok(config)
 }
 
-fn sse_reply(receiver: Receiver<String>) -> impl Reply {
-    let stream = BroadcastStream::new(receiver).filter_map(|val| val.ok().map(make_event));
+fn sse_reply(streams: Arc<Mutex<Vec<UnboundedSender<String>>>>) -> impl Reply {
+    let (tx, rx) = unbounded_channel();
+    streams.lock().unwrap().push(tx);
+    let stream = UnboundedReceiverStream::new(rx).map(make_event);
     warp::sse::reply(warp::sse::keep_alive().stream(stream))
 }
 
@@ -69,7 +72,7 @@ fn make_event(data: String) -> Result<Event, Infallible> {
     Ok(Event::default().data(data))
 }
 
-fn start_mqtt_subscription(config: MqttConfig, sender: Sender<String>) {
+fn start_mqtt_subscription(config: MqttConfig, streams: Arc<Mutex<Vec<UnboundedSender<String>>>>) {
     tokio::spawn(async move {
         let (_mqtt_client, mut mqtt_event_loop) = setup_mqtt(config).await;
 
@@ -78,7 +81,11 @@ fn start_mqtt_subscription(config: MqttConfig, sender: Sender<String>) {
                 Ok(Incoming(Publish(rumqttc::Publish { payload, .. }))) => {
                     let data = String::from_utf8_lossy(&payload).to_string();
                     log::trace!("{}", data);
-                    sender.send(data).ok();
+
+                    streams
+                        .lock()
+                        .unwrap()
+                        .retain(|tx| tx.send(data.clone()).is_ok());
                 }
                 Ok(_) => {}
                 Err(err) => {
